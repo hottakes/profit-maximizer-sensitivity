@@ -30,8 +30,8 @@ dist/
 .DS_Store
 Thumbs.db
 
-# Streamlit
-.streamlit/
+# Streamlit secrets (config.toml should be committed for deployment)
+.streamlit/secrets.toml
 
 # Jupyter
 .ipynb_checkpoints/

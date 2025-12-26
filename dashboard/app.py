@@ -1305,6 +1305,370 @@ def render_segments_tab(params: SystemParameters, mau: int):
     st.dataframe(display_ltv, width="stretch", hide_index=True)
 
 
+# =============================================================================
+# SIMPLE MODE RENDER FUNCTIONS
+# =============================================================================
+
+def render_simple_overview_tab(params: SystemParameters, mau: int):
+    """Render simplified overview for Simple mode."""
+    st.header("📊 Financial Overview")
+    st.caption("Key metrics showing whether our token economy is profitable")
+
+    # Get segments and calculate portfolio metrics
+    segments = UserSegmentDistribution.get_segments_with_assumptions(
+        params.segment_optimism, params.cpa_optimism, params.deeplink_optimism
+    )
+    analyzer = PortfolioAnalyzer(params)
+    portfolio = analyzer.analyze_portfolio(segments, mau)
+    breakeven = analyzer.calculate_breakeven(segments)
+    revenue_calc = RevenueCalculator(params)
+
+    # Calculate revenue breakdown
+    total_cpa_revenue = 0
+    total_deeplink_revenue = 0
+    total_cpa_conversions = 0
+    total_deeplink_bets = 0
+    for seg in segments:
+        seg_users = mau * seg.percentage
+        cpa_conversions = seg_users * seg.conversion_rate
+        cpa_rev = revenue_calc.calculate_acquisition_revenue(seg.conversion_rate) * seg_users / 12
+        total_cpa_revenue += cpa_rev
+        total_cpa_conversions += cpa_conversions
+        deeplink_bets = seg_users * seg.deeplink_rate
+        deeplink_rev = deeplink_bets * params.retention_rev_per_bet
+        total_deeplink_revenue += deeplink_rev
+        total_deeplink_bets += deeplink_bets
+
+    total_revenue = total_cpa_revenue + total_deeplink_revenue
+
+    # Key Metrics - 4 simple cards with explanations
+    st.markdown("### Key Numbers")
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        st.metric(
+            "Monthly Profit",
+            f"${portfolio['net']:,.0f}",
+            delta="Profitable" if portfolio['net'] > 0 else "Loss"
+        )
+        st.caption("Revenue minus all costs")
+
+    with col2:
+        margin_status = "✅ Good" if portfolio['blended_margin_pct'] >= 35 else "⚠️ Below target"
+        st.metric(
+            "Profit Margin",
+            f"{portfolio['blended_margin_pct']:.1f}%",
+            delta=margin_status
+        )
+        st.caption("What % of revenue becomes profit (target: 35%+)")
+
+    with col3:
+        ltv_status = "✅ Healthy" if breakeven['ltv_to_cac_ratio'] >= 3 else "⚠️ Low"
+        st.metric(
+            "User Payback",
+            f"{breakeven['ltv_to_cac_ratio']:.1f}x",
+            delta=ltv_status
+        )
+        st.caption("Lifetime value vs cost to acquire (target: 3x+)")
+
+    with col4:
+        st.metric(
+            "Revenue per User",
+            f"${portfolio['revenue_per_mau']:.2f}/mo"
+        )
+        st.caption("Average monthly revenue per active user")
+
+    st.divider()
+
+    # Revenue Sources - Simplified
+    st.markdown("### Where Revenue Comes From")
+    st.caption("We have two main revenue streams from our users")
+
+    rev_col1, rev_col2 = st.columns(2)
+
+    with rev_col1:
+        st.markdown("#### 💰 Sportsbook Signups (CPA)")
+        st.metric(
+            "Monthly Revenue",
+            f"${total_cpa_revenue:,.0f}"
+        )
+        st.caption(f"When users sign up for partner sportsbooks, we earn a commission. "
+                   f"Currently ~{total_cpa_conversions:.0f} signups/month at ${params.cpa_average:.0f} each.")
+
+    with rev_col2:
+        st.markdown("#### 🔗 Bet Link Usage (Retention)")
+        st.metric(
+            "Monthly Revenue",
+            f"${total_deeplink_revenue:,.0f}"
+        )
+        st.caption(f"When users place bets through our links, we earn a small commission. "
+                   f"Currently ~{total_deeplink_bets:.0f} bets/month at ${params.retention_rev_per_bet:.2f} each.")
+
+    st.divider()
+
+    # User Distribution - Simplified pie chart
+    st.markdown("### User Breakdown")
+    st.caption("How our users are distributed between free and paying tiers")
+
+    # Group segments into simpler categories
+    free_tier = sum(s.percentage for s in segments if s.name == 'Unprofitable')
+    growing = sum(s.percentage for s in segments if s.name in ['Low-Value', 'Moderate'])
+    profitable = sum(s.percentage for s in segments if s.name in ['High-Value', 'Power'])
+
+    simple_segments = pd.DataFrame([
+        {'Category': 'Free-Tier Users', 'Percentage': free_tier * 100,
+         'Description': 'Users who use the app but don\'t generate revenue'},
+        {'Category': 'Growing Users', 'Percentage': growing * 100,
+         'Description': 'Users starting to engage with revenue-generating features'},
+        {'Category': 'Profitable Users', 'Percentage': profitable * 100,
+         'Description': 'Users who actively generate revenue through signups and bets'}
+    ])
+
+    fig = px.pie(
+        simple_segments,
+        values='Percentage',
+        names='Category',
+        color='Category',
+        color_discrete_map={
+            'Free-Tier Users': '#ff6b6b',
+            'Growing Users': '#ffd93d',
+            'Profitable Users': '#6bcb77'
+        }
+    )
+    fig.update_layout(template="plotly_dark", height=350)
+    st.plotly_chart(fig, width="stretch")
+
+    # Simple summary box
+    st.info(f"""
+    **Summary**: With {mau:,} monthly active users, we generate **${portfolio['total_revenue']:,.0f}** in revenue
+    and spend **${portfolio['total_cost']:,.0f}** on costs, leaving **${portfolio['net']:,.0f}** in profit
+    ({portfolio['blended_margin_pct']:.1f}% margin).
+    """)
+
+
+def render_simple_scenarios_tab(params: SystemParameters, mau: int):
+    """Render simplified scenarios for Simple mode."""
+    st.header("📋 Scenario Comparison")
+    st.caption("Compare how different assumptions affect our profitability")
+
+    analyzer = PortfolioAnalyzer(params)
+
+    # Define 3 simple scenarios
+    scenarios = [
+        {
+            'name': '📉 Conservative',
+            'description': 'Pessimistic assumptions - fewer profitable users, lower engagement',
+            'segment_opt': 0.2,
+            'cpa_opt': 0.1,
+            'deeplink_opt': 0.3,
+            'color': '#ff6b6b'
+        },
+        {
+            'name': '⚖️ Base Case',
+            'description': 'Current assumptions - what we expect based on available data',
+            'segment_opt': params.segment_optimism,
+            'cpa_opt': params.cpa_optimism,
+            'deeplink_opt': params.deeplink_optimism,
+            'color': '#ffd93d'
+        },
+        {
+            'name': '📈 Optimistic',
+            'description': 'If user engagement exceeds our expectations',
+            'segment_opt': 0.7,
+            'cpa_opt': 0.5,
+            'deeplink_opt': 0.7,
+            'color': '#6bcb77'
+        }
+    ]
+
+    # Calculate metrics for each scenario
+    scenario_results = []
+    for scenario in scenarios:
+        segments = UserSegmentDistribution.get_segments_with_assumptions(
+            scenario['segment_opt'], scenario['cpa_opt'], scenario['deeplink_opt']
+        )
+        portfolio = analyzer.analyze_portfolio(segments, mau)
+        breakeven = analyzer.calculate_breakeven(segments)
+
+        scenario_results.append({
+            'name': scenario['name'],
+            'description': scenario['description'],
+            'color': scenario['color'],
+            'revenue': portfolio['total_revenue'],
+            'cost': portfolio['total_cost'],
+            'profit': portfolio['net'],
+            'margin': portfolio['blended_margin_pct'],
+            'ltv_cac': breakeven['ltv_to_cac_ratio']
+        })
+
+    # Display scenarios as cards
+    for result in scenario_results:
+        with st.container():
+            st.markdown(f"### {result['name']}")
+            st.caption(result['description'])
+
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Monthly Profit", f"${result['profit']:,.0f}")
+            with col2:
+                st.metric("Margin", f"{result['margin']:.1f}%")
+            with col3:
+                st.metric("User Payback", f"{result['ltv_cac']:.1f}x")
+            with col4:
+                st.metric("Monthly Revenue", f"${result['revenue']:,.0f}")
+
+            st.divider()
+
+    # Comparison chart
+    st.markdown("### Visual Comparison")
+
+    comparison_df = pd.DataFrame(scenario_results)
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        name='Revenue',
+        x=[r['name'] for r in scenario_results],
+        y=[r['revenue'] for r in scenario_results],
+        marker_color='#00ff88'
+    ))
+    fig.add_trace(go.Bar(
+        name='Cost',
+        x=[r['name'] for r in scenario_results],
+        y=[r['cost'] for r in scenario_results],
+        marker_color='#ff6b6b'
+    ))
+
+    fig.update_layout(
+        barmode='group',
+        template="plotly_dark",
+        height=400,
+        yaxis_title="Monthly Amount ($)",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02)
+    )
+    st.plotly_chart(fig, width="stretch")
+
+
+def render_simple_forecast_tab(params: SystemParameters, mau: int):
+    """Render simplified 12-month forecast for Simple mode."""
+    st.header("📅 12-Month Forecast")
+    st.caption("Projected financials over the next year based on current assumptions")
+
+    # Get current segments
+    segments = UserSegmentDistribution.get_segments_with_assumptions(
+        params.segment_optimism, params.cpa_optimism, params.deeplink_optimism
+    )
+
+    projection_engine = ProjectionEngine(params)
+    monthly_projections = projection_engine.project_monthly(segments, mau, months=12)
+
+    # Summary metrics
+    total_revenue = sum(m['revenue'] for m in monthly_projections)
+    total_cost = sum(m['cost'] for m in monthly_projections)
+    total_profit = sum(m['net'] for m in monthly_projections)
+    avg_margin = sum(m['margin_pct'] for m in monthly_projections) / 12
+
+    st.markdown("### 12-Month Summary")
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        st.metric("Total Revenue", f"${total_revenue:,.0f}")
+        st.caption("Sum of all monthly revenue")
+
+    with col2:
+        st.metric("Total Costs", f"${total_cost:,.0f}")
+        st.caption("Sum of all monthly costs")
+
+    with col3:
+        st.metric("Net Profit", f"${total_profit:,.0f}")
+        st.caption("Revenue minus costs")
+
+    with col4:
+        st.metric("Avg Margin", f"{avg_margin:.1f}%")
+        st.caption("Average profit margin")
+
+    st.divider()
+
+    # Monthly trend chart
+    st.markdown("### Monthly Trend")
+    st.caption("How revenue and costs change month over month")
+
+    months = [m['month'] for m in monthly_projections]
+    revenues = [m['revenue'] for m in monthly_projections]
+    costs = [m['cost'] for m in monthly_projections]
+    profits = [m['net'] for m in monthly_projections]
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=months, y=revenues,
+        mode='lines+markers',
+        name='Revenue',
+        line=dict(color='#00ff88', width=3)
+    ))
+    fig.add_trace(go.Scatter(
+        x=months, y=costs,
+        mode='lines+markers',
+        name='Costs',
+        line=dict(color='#ff6b6b', width=3)
+    ))
+    fig.add_trace(go.Bar(
+        x=months, y=profits,
+        name='Net Profit',
+        marker_color='#6bcb77',
+        opacity=0.6
+    ))
+
+    fig.update_layout(
+        xaxis_title="Month",
+        yaxis_title="Amount ($)",
+        template="plotly_dark",
+        height=450,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        hovermode="x unified"
+    )
+    st.plotly_chart(fig, width="stretch")
+
+    # Cumulative profit
+    st.markdown("### Cumulative Profit")
+    st.caption("Running total of profit over time")
+
+    cumulative_profit = []
+    running_total = 0
+    for m in monthly_projections:
+        running_total += m['net']
+        cumulative_profit.append(running_total)
+
+    fig2 = go.Figure()
+    fig2.add_trace(go.Scatter(
+        x=months, y=cumulative_profit,
+        mode='lines+markers',
+        fill='tozeroy',
+        name='Cumulative Profit',
+        line=dict(color='#00ff88', width=3)
+    ))
+
+    fig2.update_layout(
+        xaxis_title="Month",
+        yaxis_title="Cumulative Profit ($)",
+        template="plotly_dark",
+        height=350
+    )
+    st.plotly_chart(fig2, width="stretch")
+
+    # Key insight
+    if cumulative_profit[-1] > 0:
+        st.success(f"""
+        **Outlook**: Based on current assumptions, we project **${total_profit:,.0f}** in total profit
+        over the next 12 months, ending with **${cumulative_profit[-1]:,.0f}** in cumulative earnings.
+        """)
+    else:
+        st.warning(f"""
+        **Warning**: Current assumptions project a loss of **${abs(total_profit):,.0f}** over
+        the next 12 months. Consider adjusting revenue assumptions or reducing costs.
+        """)
+
+
 def main():
     """Main application entry point."""
     # Initialize mode toggle session state

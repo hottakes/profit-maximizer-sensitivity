@@ -97,14 +97,14 @@ class UserSegmentDistribution:
         'Power': [0.02, 0.03, 0.05],
     }
 
-    # CPA conversion rate ranges: [very_conservative, conservative, base, optimistic]
-    # Unprofitable and Low-Value are always 0% at conservative settings
+    # CPA conversion rate ranges: [zero, conservative, base, optimistic]
+    # At slider=0, all segments have 0% conversion rate
     CPA_RATES = {
         'Unprofitable': [0.0, 0.0, 0.0, 0.0],  # Never converts
         'Low-Value': [0.0, 0.0, 0.02, 0.05],
-        'Moderate': [0.0, 0.01, 0.05, 0.10],
-        'High-Value': [0.01, 0.03, 0.10, 0.20],
-        'Power': [0.03, 0.05, 0.15, 0.30],
+        'Moderate': [0.0, 0.0, 0.05, 0.10],
+        'High-Value': [0.0, 0.02, 0.10, 0.20],
+        'Power': [0.0, 0.04, 0.15, 0.30],
     }
 
     # Deeplink rates: [pessimistic, base, optimistic]

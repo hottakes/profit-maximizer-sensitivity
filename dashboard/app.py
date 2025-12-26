@@ -115,48 +115,43 @@ def create_sidebar():
         params.cpa_optimism = st.sidebar.slider(
             "CPA Conversion Rate",
             min_value=0.0, max_value=1.0, value=params.cpa_optimism, step=0.1,
-            help="Controls CPA conversion success rate per segment. Very Conservative (0) = only power users occasionally convert. We recommend conservative assumptions (0.2) until validated by real data."
+            help="Controls CPA conversion success rate per segment. At 0, no users convert. We recommend conservative assumptions (0.2) until validated by real data."
         )
     else:
         params.cpa_optimism = st.sidebar.slider(
             "Sportsbook Signups",
             min_value=0.0, max_value=1.0, value=params.cpa_optimism, step=0.1,
-            help="How often do users sign up for partner sportsbooks? This generates one-time CPA revenue (~$150 each)."
+            help="What percentage of users sign up for partner sportsbooks? At ~$150 avg CPA across 3 books, this drives one-time revenue (amortized monthly)."
         )
-    # Calculate and display estimated CPAs
+    # Calculate per-user CPA metrics
     temp_segments = UserSegmentDistribution.get_segments_with_assumptions(
         params.segment_optimism, params.cpa_optimism, params.deeplink_optimism
     )
-    est_cpas = sum(seg.percentage * seg.conversion_rate * current_mau for seg in temp_segments)
-    if params.cpa_optimism < 0.2:
-        st.sidebar.caption(f"🔒 Very Conservative: minimal signups")
-    elif params.cpa_optimism < 0.4:
-        st.sidebar.caption(f"🔒 Conservative: ~{est_cpas:.0f} signups/mo")
+    avg_conversion_rate = sum(seg.percentage * seg.conversion_rate for seg in temp_segments)
+    # Per-user monthly CPA revenue (amortized over 12 months, 3 sportsbooks)
+    cpa_per_user_monthly = avg_conversion_rate * params.cpa_average * 3 / 12
+    if params.cpa_optimism == 0:
+        st.sidebar.caption("No signups expected")
     else:
-        st.sidebar.caption(f"⚠️ Optimistic: ~{est_cpas:.0f} signups/mo")
+        st.sidebar.caption(f"~{avg_conversion_rate*100:.1f}% convert | ~${cpa_per_user_monthly:.2f}/user/mo")
 
     # Deeplink Engagement slider
     if advanced_mode:
         params.deeplink_optimism = st.sidebar.slider(
             "Deeplink Engagement",
             min_value=0.0, max_value=1.0, value=params.deeplink_optimism, step=0.1,
-            help="Controls how frequently users engage with retention bets (deeplinks). Pessimistic (0) = low adoption. Optimistic (1) = strong engagement across all profitable segments."
+            help="Controls how many bets per month users place through deeplinks. Lower values = fewer bets per user. Higher values = more engagement across all profitable segments."
         )
     else:
         params.deeplink_optimism = st.sidebar.slider(
             "Bet Link Usage",
             min_value=0.0, max_value=1.0, value=params.deeplink_optimism, step=0.1,
-            help="How often do users place bets through our links? This generates ongoing revenue ($0.50 per bet)."
+            help="How many bets per month does the average user place through our links? Each bet generates ~$0.50 in ongoing revenue."
         )
-    # Calculate estimated deeplink revenue
-    est_bets = sum(seg.percentage * seg.deeplink_rate * current_mau for seg in temp_segments)
-    est_deeplink_rev = est_bets * params.retention_rev_per_bet
-    if params.deeplink_optimism < 0.3:
-        st.sidebar.caption(f"📉 Low usage: ~${est_deeplink_rev:,.0f}/mo")
-    elif params.deeplink_optimism > 0.7:
-        st.sidebar.caption(f"📈 High usage: ~${est_deeplink_rev:,.0f}/mo")
-    else:
-        st.sidebar.caption(f"⚖️ Moderate: ~${est_deeplink_rev:,.0f}/mo")
+    # Calculate per-user deeplink metrics (bets per user is primary)
+    avg_bets_per_user = sum(seg.percentage * seg.deeplink_rate for seg in temp_segments)
+    deeplink_per_user_monthly = avg_bets_per_user * params.retention_rev_per_bet
+    st.sidebar.caption(f"~{avg_bets_per_user:.1f} bets/user/mo | ~${deeplink_per_user_monthly:.2f}/user/mo")
 
     st.sidebar.divider()
 
@@ -403,26 +398,30 @@ def render_overview_tab(params: SystemParameters, mau: int):
     rev_col1, rev_col2, rev_col3 = st.columns(3)
 
     with rev_col1:
+        cpa_per_user = total_cpa_revenue / mau if mau > 0 else 0
+        avg_conv_rate = total_cpa_conversions / mau if mau > 0 else 0
         st.metric(
             "CPA Revenue",
             f"${total_cpa_revenue:,.0f}/mo",
-            delta=f"{cpa_pct:.0f}% of total"
+            delta=f"${cpa_per_user:.2f}/user"
         )
-        st.caption(f"~{total_cpa_conversions:.0f} conversions @ ${params.cpa_average:.0f} avg (amortized)")
+        st.caption(f"~{avg_conv_rate*100:.1f}% of users convert | ~{total_cpa_conversions:.0f} total/mo")
 
     with rev_col2:
+        deeplink_per_user = total_deeplink_revenue / mau if mau > 0 else 0
+        avg_bets = total_deeplink_bets / mau if mau > 0 else 0
         st.metric(
             "Deeplink Revenue",
             f"${total_deeplink_revenue:,.0f}/mo",
-            delta=f"{deeplink_pct:.0f}% of total"
+            delta=f"${deeplink_per_user:.2f}/user"
         )
-        st.caption(f"~{total_deeplink_bets:.0f} bets/mo @ ${params.retention_rev_per_bet:.2f}")
+        st.caption(f"~{avg_bets:.1f} bets/user/mo | ~{total_deeplink_bets:.0f} total bets/mo")
 
     with rev_col3:
         st.metric(
             "Total Revenue",
             f"${total_revenue:,.0f}/mo",
-            delta=f"${total_revenue/mau:.2f}/MAU"
+            delta=f"${total_revenue/mau:.2f}/user"
         )
 
     st.divider()
@@ -1388,22 +1387,26 @@ def render_simple_overview_tab(params: SystemParameters, mau: int):
     rev_col1, rev_col2 = st.columns(2)
 
     with rev_col1:
+        cpa_per_user = total_cpa_revenue / mau if mau > 0 else 0
+        avg_conv_rate = total_cpa_conversions / mau if mau > 0 else 0
         st.markdown("#### 💰 Sportsbook Signups (CPA)")
         st.metric(
             "Monthly Revenue",
-            f"${total_cpa_revenue:,.0f}"
+            f"${total_cpa_revenue:,.0f}",
+            delta=f"${cpa_per_user:.2f}/user"
         )
-        st.caption(f"When users sign up for partner sportsbooks, we earn a commission. "
-                   f"Currently ~{total_cpa_conversions:.0f} signups/month at ${params.cpa_average:.0f} each.")
+        st.caption(f"~{avg_conv_rate*100:.1f}% of users convert | ${params.cpa_average:.0f} per signup (amortized monthly)")
 
     with rev_col2:
+        deeplink_per_user = total_deeplink_revenue / mau if mau > 0 else 0
+        avg_bets = total_deeplink_bets / mau if mau > 0 else 0
         st.markdown("#### 🔗 Bet Link Usage (Retention)")
         st.metric(
             "Monthly Revenue",
-            f"${total_deeplink_revenue:,.0f}"
+            f"${total_deeplink_revenue:,.0f}",
+            delta=f"${deeplink_per_user:.2f}/user"
         )
-        st.caption(f"When users place bets through our links, we earn a small commission. "
-                   f"Currently ~{total_deeplink_bets:.0f} bets/month at ${params.retention_rev_per_bet:.2f} each.")
+        st.caption(f"~{avg_bets:.1f} bets/user/mo @ ${params.retention_rev_per_bet:.2f} per bet")
 
     st.divider()
 
